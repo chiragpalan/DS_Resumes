@@ -1,3 +1,4 @@
+
 import dataiku
 import pandas as pd
 from collections import defaultdict
@@ -12,11 +13,14 @@ def get_zone_name(dataset_def):
     return dataset_def.get("zone", "default")
 
 def get_flow_name_for_recipe(project, recipe_name):
-    # Assuming the flow name is the same as the recipe name or you can extract it from settings
     flow_name = None
     try:
-        recipe = project.get_recipe(recipe_name)
-        flow_name = recipe.get_flow().get("name")  # Try to get flow name if it's available
+        flow = project.get_flow()
+        # Search through the flow nodes (i.e., recipes) to find the recipe
+        for node in flow.list_nodes():
+            if node["type"] == "recipe" and node["recipe"]["name"] == recipe_name:
+                flow_name = node["name"]
+                break
     except Exception as e:
         print(f"Could not retrieve flow for recipe {recipe_name}: {e}")
     return flow_name or "default_flow"
