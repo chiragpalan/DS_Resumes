@@ -106,3 +106,28 @@ for project_key in projects_to_include:
 # Example to print or export
 # import json
 # print(json.dumps(full_lineage, indent=2))
+
+
+
+
+
+
+import pandas as pd  # Make sure pandas is imported
+
+rows = []
+
+for project, zones in full_lineage.items():
+    for zone, datasets in zones.items():
+        for final_dataset, steps in datasets.items():
+            for step in steps:
+                rows.append({
+                    "project": project,
+                    "zone": zone,
+                    "final_dataset": final_dataset,
+                    "recipe_name": step["recipe_name"],
+                    "recipe_type": step["recipe_type"],
+                    "output_dataset": step["output_dataset"],
+                    "input_datasets": ", ".join(step["input_datasets"])  # join for readability
+                })
+
+df = pd.DataFrame(rows)
