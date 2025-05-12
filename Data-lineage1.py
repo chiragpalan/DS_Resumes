@@ -3,15 +3,11 @@ import dataiku
 from collections import defaultdict
 
 client = dataiku.api_client()
-
-# List of project keys to include
 projects_to_include = ["PROJECT1", "PROJECT2", "PROJECT3", "PROJECT4"]
 
-# Final output dictionary: project > zone > final_dataset > list of steps
 full_lineage = defaultdict(lambda: defaultdict(dict))
 
 def get_zone_name(dataset_def):
-    # Extracts zone name from dataset definition (if available)
     return dataset_def.get("zone", "default")
 
 def trace_recipe_chain(project, final_dataset, recipe_graph):
@@ -38,14 +34,12 @@ def trace_recipe_chain(project, final_dataset, recipe_graph):
     dfs(final_dataset)
     return steps
 
-# Process each project
 for project_key in projects_to_include:
     print(f"Processing project: {project_key}")
     project = client.get_project(project_key)
     recipes = project.list_recipes()
     datasets = project.list_datasets()
 
-    # Build recipe graph and zone mapping
     recipe_graph = {}
     all_inputs = set()
     output_to_zone = {}
@@ -53,11 +47,31 @@ for project_key in projects_to_include:
     for rec in recipes:
         recipe_name = rec['name']
         recipe_obj = project.get_recipe(recipe_name)
-        definition = recipe_obj.get_definition()
-        recipe_type = definition.get("type", "unknown")
 
-        inputs = [inp['ref'] for inp in definition.get("inputs", {}).get("main", [])]
-        outputs = [out['ref'] for out in definition.get("outputs", {}).get("main", [])]
+        try:
+            settings_obj = recipe_obj.get_settings()
+            settings = settings_obj.recipe if hasattr(settings_obj, "recipe") else settings_obj.to_json()
+        except Exception as e:
+            print(f"Failed to get settings for recipe {recipe_name}: {e}")
+            continue
+
+        try:
+            recipe_type = settings["type"]
+        except (KeyError, TypeError):
+            recipe_type = "unknown"
+
+        # Safe access to inputs and outputs
+        inputs = []
+        outputs = []
+
+        try:
+            if "inputs" in settings and "main" in settings["inputs"]:
+                inputs = [inp["ref"] for inp in settings["inputs"]["main"]]
+            if "outputs" in settings and "main" in settings["outputs"]:
+                outputs = [out["ref"] for out in settings["outputs"]["main"]]
+        except Exception as e:
+            print(f"Error accessing inputs/outputs for {recipe_name}: {e}")
+            continue
 
         for out in outputs:
             recipe_graph[out] = {
@@ -67,7 +81,6 @@ for project_key in projects_to_include:
             }
             all_inputs.update(inputs)
 
-            # Determine zone (if possible)
             try:
                 dataset_name = out.split('.')[-1]
                 dataset_obj = project.get_dataset(dataset_name)
@@ -77,16 +90,14 @@ for project_key in projects_to_include:
             except:
                 output_to_zone[out] = "unknown"
 
-    # Identify final datasets: those that are not inputs to any recipe
     all_dataset_names = [f"{project_key}.{d['name']}" for d in datasets]
     final_datasets = [ds for ds in all_dataset_names if ds not in all_inputs]
 
-    # Trace lineage for each final dataset
     for final_ds in final_datasets:
         zone = output_to_zone.get(final_ds, "unknown")
         steps = trace_recipe_chain(project, final_ds, recipe_graph)
         full_lineage[project_key][zone][final_ds] = steps
 
-# full_lineage now contains the full recipe lineage dictionary
-# Example access:
-# full_lineage["PROJECT1"]["zoneA"]["PROJECT1.final_dataset_x"]
+# Uncomment below to see the output
+# import json
+# print(json.dumps(full_lineage, indent=2))
