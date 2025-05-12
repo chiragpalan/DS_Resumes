@@ -5,99 +5,104 @@ from collections import defaultdict
 client = dataiku.api_client()
 projects_to_include = ["PROJECT1", "PROJECT2", "PROJECT3", "PROJECT4"]
 
+# Structure: {project: {zone: {final_dataset: [steps]}}}
 full_lineage = defaultdict(lambda: defaultdict(dict))
 
 def get_zone_name(dataset_def):
     return dataset_def.get("zone", "default")
 
-def trace_recipe_chain(project, final_dataset, recipe_graph):
-    visited = set()
+def trace_recipe_chain(final_ds_fullname, recipe_graph, visited):
+    if final_ds_fullname in visited:
+        return []
+
+    visited.add(final_ds_fullname)
+    recipe_info = recipe_graph.get(final_ds_fullname)
     steps = []
 
-    def dfs(ds_name):
-        if ds_name in visited:
-            return
-        visited.add(ds_name)
-
-        recipe_info = recipe_graph.get(ds_name)
-        if recipe_info:
-            for inp in recipe_info['inputs']:
-                dfs(inp)
-            steps.append({
-                "step": len(steps) + 1,
-                "recipe_name": recipe_info['recipe_name'],
-                "recipe_type": recipe_info['recipe_type'],
-                "output_dataset": ds_name,
-                "input_datasets": recipe_info['inputs']
-            })
-
-    dfs(final_dataset)
+    if recipe_info:
+        for inp in recipe_info['inputs']:
+            steps += trace_recipe_chain(inp, recipe_graph, visited)
+        steps.append({
+            "recipe_name": recipe_info['recipe_name'],
+            "recipe_type": recipe_info['recipe_type'],
+            "output_dataset": final_ds_fullname,
+            "input_datasets": recipe_info['inputs']
+        })
     return steps
 
 for project_key in projects_to_include:
     print(f"Processing project: {project_key}")
     project = client.get_project(project_key)
-    recipes = project.list_recipes()
-    datasets = project.list_datasets()
 
+    datasets = project.list_datasets()
+    dataset_names = {d['name'] for d in datasets}
+    dataset_fullnames = {d['name']: f"{project_key}.{d['name']}" for d in datasets}
+
+    recipes = project.list_recipes()
     recipe_graph = {}
-    all_inputs = set()
+    all_input_datasets = set()
     output_to_zone = {}
 
     for rec in recipes:
-        recipe_name = rec['name']
+        recipe_name = rec["name"]
         recipe_obj = project.get_recipe(recipe_name)
 
         try:
-            settings_obj = recipe_obj.get_settings()
-            settings = settings_obj.recipe if hasattr(settings_obj, "recipe") else settings_obj.to_json()
+            settings = recipe_obj.get_settings()
+            raw_def = settings.get_recipe_raw_definition()
         except Exception as e:
             print(f"Failed to get settings for recipe {recipe_name}: {e}")
             continue
 
-        try:
-            recipe_type = settings["type"]
-        except (KeyError, TypeError):
-            recipe_type = "unknown"
+        recipe_type = raw_def.get("type", "unknown")
 
-        # Safe access to inputs and outputs
         inputs = []
         outputs = []
 
         try:
-            if "inputs" in settings and "main" in settings["inputs"]:
-                inputs = [inp["ref"] for inp in settings["inputs"]["main"]]
-            if "outputs" in settings and "main" in settings["outputs"]:
-                outputs = [out["ref"] for out in settings["outputs"]["main"]]
+            for role, role_data in raw_def.get("inputs", {}).items():
+                for inp in role_data.get("items", []):
+                    inp_ref = inp["ref"]
+                    if "." not in inp_ref:
+                        inp_ref = f"{project_key}.{inp_ref}"
+                    inputs.append(inp_ref)
+
+            for role, role_data in raw_def.get("outputs", {}).items():
+                for out in role_data.get("items", []):
+                    out_ref = out["ref"]
+                    if "." not in out_ref:
+                        out_ref = f"{project_key}.{out_ref}"
+                    outputs.append(out_ref)
         except Exception as e:
-            print(f"Error accessing inputs/outputs for {recipe_name}: {e}")
+            print(f"Error parsing recipe {recipe_name}: {e}")
             continue
 
-        for out in outputs:
-            recipe_graph[out] = {
+        for output in outputs:
+            recipe_graph[output] = {
                 "recipe_name": recipe_name,
                 "recipe_type": recipe_type,
                 "inputs": inputs
             }
-            all_inputs.update(inputs)
+            all_input_datasets.update(inputs)
 
             try:
-                dataset_name = out.split('.')[-1]
-                dataset_obj = project.get_dataset(dataset_name)
-                dataset_def = dataset_obj.get_definition()
-                zone_name = get_zone_name(dataset_def)
-                output_to_zone[out] = zone_name
+                ds_obj = project.get_dataset(output.split('.')[-1])
+                ds_def = ds_obj.get_definition()
+                zone = get_zone_name(ds_def)
             except:
-                output_to_zone[out] = "unknown"
+                zone = "unknown"
+            output_to_zone[output] = zone
 
-    all_dataset_names = [f"{project_key}.{d['name']}" for d in datasets]
-    final_datasets = [ds for ds in all_dataset_names if ds not in all_inputs]
+    # Determine final datasets
+    all_project_datasets = {f"{project_key}.{d['name']}" for d in datasets}
+    final_datasets = all_project_datasets - all_input_datasets
 
     for final_ds in final_datasets:
         zone = output_to_zone.get(final_ds, "unknown")
-        steps = trace_recipe_chain(project, final_ds, recipe_graph)
+        visited = set()
+        steps = trace_recipe_chain(final_ds, recipe_graph, visited)
         full_lineage[project_key][zone][final_ds] = steps
 
-# Uncomment below to see the output
+# Example to print or export
 # import json
 # print(json.dumps(full_lineage, indent=2))
