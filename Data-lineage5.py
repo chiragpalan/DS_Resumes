@@ -19,13 +19,21 @@ recipe_info = []
 # Iterate through each recipe to extract inputs and outputs
 for recipe_meta in recipes:
     recipe = project.get_recipe(recipe_meta['name'])
-    recipe_inputs_outputs = recipe.get_inputs_outputs()
+    settings = recipe.get_settings()
 
-    inputs = recipe_inputs_outputs.get('inputs', {}).get('main', [])
-    outputs = recipe_inputs_outputs.get('outputs', {}).get('main', [])
+    # Retrieve inputs and outputs from the recipe settings
+    inputs = settings.get_recipe_inputs()
+    outputs = settings.get_recipe_outputs()
 
-    output_dataset_names = [o['ref'] for o in outputs]
-    input_dataset_names = [i['ref'] for i in inputs]
+    # Extract input and output dataset names
+    input_dataset_names = []
+    for role_inputs in inputs.values():
+        input_dataset_names.extend(role_inputs)
+
+    output_dataset_names = []
+    for role_outputs in outputs.values():
+        output_dataset_names.extend(role_outputs)
+
     output_datasets.update(output_dataset_names)
 
     for output in output_dataset_names:
