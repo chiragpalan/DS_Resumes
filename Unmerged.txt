@@ -1,0 +1,20 @@
+
+Sub UnmergeAndFill()
+    Dim cell As Range
+    Dim mergeRange As Range
+
+    ' Loop through all cells in the used range
+    For Each cell In ActiveSheet.UsedRange
+        If cell.MergeCells Then
+            Set mergeRange = cell.MergeArea
+            ' Store value before unmerging
+            val = cell.Value
+            ' Unmerge
+            mergeRange.UnMerge
+            ' Fill all previously merged cells with value
+            mergeRange.Value = val
+        End If
+    Next cell
+
+    MsgBox "All merged cells have been unmerged and filled."
+End Sub
