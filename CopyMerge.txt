@@ -1,0 +1,61 @@
+Sub Process_XLSX_Files_From_ABCD_Folder()
+    Dim folderPath As String, fileName As String
+    Dim wb As Workbook
+    Dim wsSource As Worksheet, wsDest As Worksheet
+    Dim cell As Range, mergeArea As Range
+    Dim val As Variant
+
+    ' 🔁 Change this path to your actual "abcd" folder
+    folderPath = "C:\Your\Path\abcd\"
+
+    If Right(folderPath, 1) <> "\" Then folderPath = folderPath & "\"
+    fileName = Dir(folderPath & "*.xlsx")
+
+    Application.ScreenUpdating = False
+    Application.DisplayAlerts = False
+
+    Do While fileName <> ""
+        Set wb = Workbooks.Open(folderPath & fileName)
+
+        On Error Resume Next
+        Set wsSource = wb.Sheets("NEW")
+        On Error GoTo 0
+
+        If Not wsSource Is Nothing Then
+            ' Remove Sheet2 if it exists
+            On Error Resume Next
+            wb.Sheets("Sheet2").Delete
+            On Error GoTo 0
+
+            ' Create new Sheet2
+            Set wsDest = wb.Sheets.Add(After:=wb.Sheets(wb.Sheets.Count))
+            wsDest.Name = "Sheet2"
+
+            ' Copy data from B11:R18 to A1:Q8
+            wsDest.Range("A1:Q8").Value = wsSource.Range("B11:R18").Value
+
+            ' Unmerge and fill merged cells
+            For Each cell In wsDest.UsedRange
+                If cell.MergeCells Then
+                    Set mergeArea = cell.MergeArea
+                    val = cell.Value
+                    mergeArea.UnMerge
+                    mergeArea.Value = val
+                End If
+            Next cell
+
+            wb.Save
+            wb.Close
+        Else
+            MsgBox "Sheet 'NEW' not found in " & fileName, vbExclamation
+            wb.Close False
+        End If
+
+        fileName = Dir
+    Loop
+
+    Application.ScreenUpdating = True
+    Application.DisplayAlerts = True
+
+    MsgBox "✅ All .xlsx files from 'abcd' folder processed!"
+End Sub
