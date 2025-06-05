@@ -5,7 +5,7 @@ Sub Process_XLSX_Files_From_ABCD_Folder()
     Dim cell As Range, mergeArea As Range
     Dim val As Variant
 
-    ' 🔁 Change this path to your actual "abcd" folder
+    ' 🔁 Change this to your actual path
     folderPath = "C:\Your\Path\abcd\"
 
     If Right(folderPath, 1) <> "\" Then folderPath = folderPath & "\"
@@ -22,19 +22,19 @@ Sub Process_XLSX_Files_From_ABCD_Folder()
         On Error GoTo 0
 
         If Not wsSource Is Nothing Then
-            ' Remove Sheet2 if it exists
+            ' Remove existing Sheet2 if any
             On Error Resume Next
             wb.Sheets("Sheet2").Delete
             On Error GoTo 0
 
-            ' Create new Sheet2
+            ' Add new Sheet2
             Set wsDest = wb.Sheets.Add(After:=wb.Sheets(wb.Sheets.Count))
             wsDest.Name = "Sheet2"
 
-            ' Copy data from B11:R18 to A1:Q8
+            ' Copy data from B11:R18 → A1:Q8
             wsDest.Range("A1:Q8").Value = wsSource.Range("B11:R18").Value
 
-            ' Unmerge and fill merged cells
+            ' ✅ Unmerge and fill all previously merged cells
             For Each cell In wsDest.UsedRange
                 If cell.MergeCells Then
                     Set mergeArea = cell.MergeArea
@@ -47,7 +47,7 @@ Sub Process_XLSX_Files_From_ABCD_Folder()
             wb.Save
             wb.Close
         Else
-            MsgBox "Sheet 'NEW' not found in " & fileName, vbExclamation
+            MsgBox "❌ Sheet 'NEW' not found in: " & fileName, vbExclamation
             wb.Close False
         End If
 
@@ -57,5 +57,5 @@ Sub Process_XLSX_Files_From_ABCD_Folder()
     Application.ScreenUpdating = True
     Application.DisplayAlerts = True
 
-    MsgBox "✅ All .xlsx files from 'abcd' folder processed!"
+    MsgBox "✅ All .xlsx files in 'abcd' folder processed!"
 End Sub
