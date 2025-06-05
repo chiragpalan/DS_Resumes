@@ -1,13 +1,14 @@
 
-Sub Process_XLSX_Files_And_UnmergeFill()
+Sub Process_XLSX_Files_UnmergeAndFill()
+
     Dim folderPath As String, fileName As String
     Dim wb As Workbook
     Dim wsSource As Worksheet, wsDest As Worksheet
     Dim cell As Range, mergeArea As Range
-    Dim val As Variant
-    Dim c As Range
+    Dim val As Variant, c As Range
+    Dim processedMerges As Object
 
-    ' 🔁 Set your folder path here
+    ' Set your folder path (update this as needed)
     folderPath = "C:\Your\Path\abcd\"
 
     If Right(folderPath, 1) <> "\" Then folderPath = folderPath & "\"
@@ -24,27 +25,33 @@ Sub Process_XLSX_Files_And_UnmergeFill()
         On Error GoTo 0
 
         If Not wsSource Is Nothing Then
-            ' Delete Sheet2 if it already exists
+            ' Delete existing Sheet2
             On Error Resume Next
             wb.Sheets("Sheet2").Delete
             On Error GoTo 0
 
-            ' Add new Sheet2
+            ' Add Sheet2
             Set wsDest = wb.Sheets.Add(After:=wb.Sheets(wb.Sheets.Count))
             wsDest.Name = "Sheet2"
 
-            ' Copy data from NEW!B11:R18 → Sheet2!A1:Q8
+            ' Copy B11:R18 to A1:Q8 in Sheet2
             wsDest.Range("A1:Q8").Value = wsSource.Range("B11:R18").Value
 
-            ' ✅ Unmerge all merged cells and fill each resulting cell with original value
+            ' Set to track processed merged areas
+            Set processedMerges = CreateObject("Scripting.Dictionary")
+
+            ' ✅ Go through all cells and unmerge any merged ranges
             For Each cell In wsDest.UsedRange
                 If cell.MergeCells Then
                     Set mergeArea = cell.MergeArea
-                    val = cell.Value
-                    mergeArea.UnMerge
-                    For Each c In mergeArea.Cells
-                        c.Value = val
-                    Next c
+                    If Not processedMerges.exists(mergeArea.Address) Then
+                        val = mergeArea.Cells(1, 1).Value
+                        mergeArea.UnMerge
+                        For Each c In mergeArea.Cells
+                            c.Value = val
+                        Next c
+                        processedMerges.Add mergeArea.Address, True
+                    End If
                 End If
             Next cell
 
@@ -61,5 +68,5 @@ Sub Process_XLSX_Files_And_UnmergeFill()
     Application.ScreenUpdating = True
     Application.DisplayAlerts = True
 
-    MsgBox "✅ All .xlsx files in 'abcd' folder processed!"
+    MsgBox "✅ All files processed!"
 End Sub
