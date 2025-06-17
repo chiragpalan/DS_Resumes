@@ -10,120 +10,128 @@ from pmdarima import auto_arima
 from sklearn.metrics import mean_squared_error
 
 # ---------------------------------------------
-# STEP 0: Assume df_sarimax is already loaded,
-# indexed by DateTime, with one column 'y'
-# and other columns as potential exogenous X's.
+# STEP 0: Load your DataFrame
+#   - Must have a DateTime index
+#   - Column "y" is your target
+#   - All other columns are candidate exogenous features
 # ---------------------------------------------
 # df_sarimax = pd.read_csv("your_data.csv", index_col=0, parse_dates=True)
 
 # ---------------------------------------------
-# STEP 1: Check stationarity of y and difference if needed
+# STEP 1: Stationarity check and differencing
 # ---------------------------------------------
 def make_stationary(series, signif=0.05):
-    """
-    Perform ADF test; if p-value > signif, difference once.
-    Returns stationary series and a flag whether diff was applied.
-    """
-    adf_stat, pval, _, _, crit_vals, _ = adfuller(series.dropna())
+    """ADF test; difference once if non-stationary."""
+    series = series.dropna()
+    adf_stat, pval, *_ , crit_vals, _ = adfuller(series)
     print(f"ADF p-value for {series.name}: {pval:.4f}")
     if pval > signif:
-        print(f" -> Differencing {series.name}")
+        print(f"  → differencing {series.name}")
         return series.diff().dropna(), True
     else:
         return series, False
 
+# 1a) Target
 y_orig = df_sarimax['y']
-y_stationary, y_diffed = make_stationary(y_orig)
+y_stat, y_diffed = make_stationary(y_orig)
 
-# ---------------------------------------------
-# STEP 2: Align df_sarimax to y_stationary index
-# ---------------------------------------------
-df = df_sarimax.copy()
-if y_diffed:
-    df['y'] = y_stationary
-else:
-    df = df.loc[y_stationary.index]
-
-# ---------------------------------------------
-# STEP 3: (Optional) Check & difference exog if needed
-# ---------------------------------------------
-exog_cols = [c for c in df.columns if c != 'y']
-df_exog = df[exog_cols].copy()
+# 1b) Exogenous features
+exog_cols = [c for c in df_sarimax.columns if c != 'y']
+df_exog = df_sarimax[exog_cols].copy()
 diffed_exogs = []
 for col in exog_cols:
-    series, did = make_stationary(df_exog[col])
-    if did:
-        df_exog[col] = series
+    ser, diffed = make_stationary(df_exog[col])
+    if diffed:
+        df_exog[col] = ser
         diffed_exogs.append(col)
 print("Differenced exogs:", diffed_exogs)
 
-# Re-combine y + exog into one DF
-df_clean = pd.concat([y_stationary, df_exog], axis=1).dropna()
+# Align everything on common index
+if y_diffed:
+    df_core = pd.concat([y_stat, df_exog], axis=1).dropna()
+else:
+    df_core = pd.concat([y_orig, df_exog], axis=1).loc[y_stat.index].dropna()
+df_core.rename(columns={y_orig.name: 'y'}, inplace=True)
 
 # ---------------------------------------------
-# STEP 4: Train–test split (80% train / 20% test)
+# STEP 2: Create lagged exogenous variables
 # ---------------------------------------------
-split_idx = int(len(df_clean) * 0.8)
-train_df = df_clean.iloc[:split_idx]
-test_df  = df_clean.iloc[split_idx:]
+def create_lags(df, lags=3):
+    """For each column in df, create lag1…lagN and drop rows with any NaN."""
+    lagged = df.copy()
+    for col in df.columns:
+        for lag in range(1, lags+1):
+            lagged[f"{col}_lag{lag}"] = df[col].shift(lag)
+    return lagged.dropna()
 
-y_train = train_df['y']
-y_test  = test_df['y']
-X_train = train_df.drop(columns='y')
-X_test  = test_df.drop(columns='y')
+# Only create lags for exogenous columns
+df_lags = create_lags(df_core.drop(columns='y'), lags=3)
+
+# Align y to the lagged exog DataFrame
+y_lagged = df_core['y'].loc[df_lags.index]
 
 # ---------------------------------------------
-# STEP 5: Scale exogenous features
+# STEP 3: Train/Test Split (80/20 chronologically)
+# ---------------------------------------------
+split_at = int(len(df_lags) * 0.8)
+X_train_raw = df_lags.iloc[:split_at]
+X_test_raw  = df_lags.iloc[split_at:]
+y_train      = y_lagged.iloc[:split_at]
+y_test       = y_lagged.iloc[split_at:]
+
+# ---------------------------------------------
+# STEP 4: Scale exogenous features
 # ---------------------------------------------
 scaler = StandardScaler()
-X_train_scaled = pd.DataFrame(
-    scaler.fit_transform(X_train),
-    index=X_train.index, columns=X_train.columns
+X_train = pd.DataFrame(
+    scaler.fit_transform(X_train_raw),
+    index=X_train_raw.index,
+    columns=X_train_raw.columns
 )
-X_test_scaled = pd.DataFrame(
-    scaler.transform(X_test),
-    index=X_test.index, columns=X_test.columns
+X_test  = pd.DataFrame(
+    scaler.transform(X_test_raw),
+    index=X_test_raw.index,
+    columns=X_test_raw.columns
 )
 
 # ---------------------------------------------
-# STEP 6: Feature Selection via XGBoost
+# STEP 5: Feature Selection via XGBoost
 # ---------------------------------------------
 xgb = XGBRegressor(random_state=42, n_estimators=100)
-xgb.fit(X_train_scaled, y_train)
+xgb.fit(X_train, y_train)
 
 importances = xgb.feature_importances_
-feat_names  = X_train_scaled.columns
-indices     = np.argsort(importances)[::-1]
+names       = X_train.columns
+idx_sorted  = np.argsort(importances)[::-1]
 
-# Pick top 10 features
 top_n = 10
-top_features = feat_names[indices[:top_n]].tolist()
-print("Top features selected:", top_features)
+top_feats = names[idx_sorted[:top_n]].tolist()
+print("Top features:", top_feats)
 
-X_train_sel = X_train_scaled[top_features]
-X_test_sel  = X_test_scaled[top_features]
+X_train_sel = X_train[top_feats]
+X_test_sel  = X_test[top_feats]
 
 # ---------------------------------------------
-# STEP 7: Fit auto_arima with quarterly seasonality
+# STEP 6: Fit auto_arima (SARIMAX) with quarterly seasonality
 # ---------------------------------------------
-arima_model = auto_arima(
+model = auto_arima(
     y_train,
     exogenous=X_train_sel,
-    seasonal=True,     # enable SARIMAX
-    m=4,               # quarterly data: 4 periods per year
+    seasonal=True,
+    m=4,                 # quarterly
     trace=True,
     error_action='ignore',
     suppress_warnings=True,
     stepwise=True
 )
-print(arima_model.summary())
+print(model.summary())
 
 # ---------------------------------------------
-# STEP 8: Forecast on test set & evaluate
+# STEP 7: Forecast & Evaluate
 # ---------------------------------------------
-n_test = len(y_test)
-forecast, conf_int = arima_model.predict(
-    n_periods=n_test,
+n_periods = len(y_test)
+forecast, conf_int = model.predict(
+    n_periods=n_periods,
     exogenous=X_test_sel,
     return_conf_int=True
 )
@@ -132,16 +140,16 @@ rmse = np.sqrt(mean_squared_error(y_test, forecast))
 print(f"Test RMSE: {rmse:.4f}")
 
 # ---------------------------------------------
-# STEP 9: Plot train, test, forecast
+# STEP 8: Plot Results
 # ---------------------------------------------
-plt.figure(figsize=(10, 5))
-plt.plot(y_train.index, y_train, label='Train y')
-plt.plot(y_test.index, y_test,   label='Test y',   color='black')
-plt.plot(y_test.index, forecast, label='Forecast', color='red')
+plt.figure(figsize=(10,5))
+plt.plot(y_train.index, y_train, label='Train')
+plt.plot(y_test.index,  y_test,  label='Test',   color='black')
+plt.plot(y_test.index,  forecast, label='Forecast', color='red')
 plt.fill_between(y_test.index,
-                 conf_int[:, 0], conf_int[:, 1],
+                 conf_int[:,0], conf_int[:,1],
                  color='pink', alpha=0.3)
-plt.title("Auto ARIMA Forecast with XGBoost-Selected Exog (Quarterly)")
+plt.title("SARIMAX Forecast with XGBoost-Selected Lagged Exog")
 plt.legend()
 plt.tight_layout()
 plt.show()
