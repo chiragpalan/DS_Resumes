@@ -1,0 +1,156 @@
+# 📊 Comprehensive Comparative Study of Uplift / True Lift Modeling Approaches
+*(For Standard Chartered Bank – Proof of Concept)*
+
+---
+
+## 🔑 Common Notations
+
+- **X**: Customer features (e.g., age, income, products, digital usage)  
+- **Y**: Campaign outcome (1 = converted, 0 = not converted)  
+- **T**: Treatment indicator (1 = received campaign, 0 = control)  
+- **f, f₁, f₀**: Predictive models  
+- **ê(X)**: Propensity score = probability of treatment given X  
+- **τ(X)**: Uplift = incremental effect of campaign  
+- **m̂(X)**: Baseline expected outcome without treatment  
+
+---
+
+## 1. S‑Learner (Single Model)
+
+**Idea / Intuition**  
+Use a single model that takes both customer features and the treatment flag as inputs.  
+The model predicts outcomes for “treated” and “untreated” scenarios.  
+Uplift is the difference between the two predictions.
+
+**Workflow**
+1. **Combine all data** (treated + control) into one dataset.  
+2. **Add a treatment flag T** as an additional column.  
+3. **Train one model** (e.g., Gradient Boosting, Logistic Regression) using (X, T) to predict Y.  
+4. For each customer:
+   - Predict probability of response if **treated** (T=1).  
+   - Predict probability if **not treated** (T=0).  
+5. **Compute uplift** as the difference.  
+6. **Rank customers** by uplift to target top persuadables.  
+
+---
+
+## 2. T‑Learner (Two Models)
+
+**Idea / Intuition**  
+Train two separate models: one for customers who received the campaign, one for those who did not.  
+Subtract predictions to get uplift.
+
+**Workflow**
+1. **Split the dataset** into two groups:
+   - **Treatment group**: Customers who received the campaign (T=1).  
+   - **Control group**: Customers who did not (T=0).  
+2. **Train Model A** on the treatment group to predict Y given X.  
+3. **Train Model B** on the control group.  
+4. For each customer:
+   - Predict probability from Model A (treated scenario).  
+   - Predict probability from Model B (control scenario).  
+5. **Compute uplift** = Model A – Model B.  
+6. **Rank and segment customers** by uplift scores for targeting.  
+
+---
+
+## 3. Class Transformation
+
+**Idea / Intuition**  
+Re‑label the dataset to mark persuadable customers as the positive class and train a single classifier.
+
+**Workflow**
+1. **Re‑label customers**:  
+   - Mark as 1 if **treated & responded** OR **control & did not respond**  
+   - Mark as 0 otherwise.  
+2. **Train a classifier** (e.g., Logistic Regression, Random Forest) to predict this new label.  
+3. The classifier learns patterns distinguishing persuadables.  
+4. **Score new customers** → Higher scores mean more likely to be persuadable.  
+5. **Use top scorers** for the campaign.  
+
+---
+
+## 4. U‑Learner
+
+**Idea / Intuition**  
+Decompose the outcome into baseline + uplift signal. Uses residuals to capture treatment effect.
+
+**Workflow**
+1. **Fit baseline model m̂(X)** on the full dataset to predict Y ignoring treatment.  
+2. **Estimate propensity ê(X)** (probability customer was treated).  
+3. For each record, compute a **pseudo‑outcome H** = (Y – m̂(X)) / (T – ê(X)).  
+   - This adjusts actual outcome by expected baseline and treatment likelihood.  
+4. **Train a regression model** on (X, H) to predict uplift.  
+5. **Predict uplift τ(X)** for each customer.  
+6. **Target customers** with highest τ(X).  
+
+---
+
+## 5. X‑Learner
+
+**Idea / Intuition**  
+Handles imbalanced treatment/control groups.  
+Imputes counterfactual outcomes for each group, then learns uplift functions.
+
+**Workflow**
+1. **Step 1: Train T‑Learner models** f₁(X) for treated, f₀(X) for control.  
+2. **Step 2: Impute counterfactuals**:  
+   - For treated customers, estimate what would have happened without treatment.  
+   - For control customers, estimate what would have happened with treatment.  
+3. **Step 3: Compute pseudo‑treatment effects**:  
+   - D¹ = actual treated outcome – imputed control outcome.  
+   - D⁰ = imputed treated outcome – actual control outcome.  
+4. **Step 4: Train effect models** h₁(X) on treated, h₀(X) on control using D¹, D⁰.  
+5. **Step 5: Combine estimates** using propensity ê(X):  
+   τ(X) = ê(X)·h₀(X) + (1 – ê(X))·h₁(X).  
+6. **Rank customers** by τ(X).  
+
+---
+
+## 6. R‑Learner
+
+**Idea / Intuition**  
+Separates treatment effect from other outcome predictors using residualization.  
+Ensures double robustness (consistent if either outcome or propensity model is accurate).
+
+**Workflow**
+1. **Step 1: Estimate baseline outcome** m̂(X).  
+2. **Step 2: Estimate treatment propensity** ê(X).  
+3. **Step 3: Compute residuals**:  
+   - Ŷ = Y – m̂(X).  
+   - T̃ = T – ê(X).  
+4. **Step 4: Fit regression** of Ŷ on T̃ with features X.  
+   - Captures effect of treatment residual on outcome residual.  
+5. **Step 5: Predict τ(X)** as the uplift score.  
+6. **Use predictions** for targeting persuadables.  
+
+---
+
+## 7. Uplift Trees & Forests
+
+**Idea / Intuition**  
+Adapts decision tree algorithms so that each split maximizes **uplift difference** between treated and control groups.
+
+**Workflow**
+1. **Initialize a decision tree** with all customer data.  
+2. **Choose splits** that maximize difference in response rates between treated and control subsets.  
+3. **Grow tree** until a stopping criterion is met (e.g., min leaf size).  
+4. Each **leaf node** predicts uplift = (treated response – control response).  
+5. **Random Forests**: build multiple uplift trees and average predictions for stability.  
+6. **Interpret the rules**: e.g., “Young digital‑savvy women → +5pp uplift.”  
+
+---
+
+## 8. Causal Forests
+
+**Idea / Intuition**  
+An ensemble of uplift trees with causal regularization, optimized for heterogeneous treatment effect estimation.
+
+**Workflow**
+1. **Build many uplift trees**, each trained on a bootstrapped sample.  
+2. Use **honest splitting** (separating training of structure and treatment effect) to avoid bias.  
+3. Aggregate uplift predictions across trees for each customer.  
+4. Report **confidence intervals** for τ(X) to quantify uncertainty.  
+5. **Target high‑uplift segments** with reliable estimates.  
+
+---
