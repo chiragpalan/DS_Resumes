@@ -154,3 +154,68 @@ An ensemble of uplift trees with causal regularization, optimized for heterogene
 5. **Target high‑uplift segments** with reliable estimates.  
 
 ---
+
+
+
+
+# Understanding X¹ and X⁰ in the X‑Learner Approach
+
+---
+
+## 🔑 What Are X¹ and X⁰?
+
+- **X¹ (“X one”)**  
+  - Feature set of customers in the **treatment group** (T = 1).  
+  - These customers **received the campaign**.  
+
+- **X⁰ (“X zero”)**  
+  - Feature set of customers in the **control group** (T = 0).  
+  - These customers **did not receive the campaign**.  
+
+---
+
+## 🔢 How They Are Used in X‑Learner Equations
+
+1. **For Treated Group (X¹)**  
+   - Compute imputed treatment effect:  
+   \[
+   D^1 = Y^1 - \hat{f}_0(X^1)
+   \]
+   - Actual outcome (Y¹) minus predicted outcome if they had been in control.  
+
+2. **For Control Group (X⁰)**  
+   - Compute imputed treatment effect:  
+   \[
+   D^0 = \hat{f}_1(X^0) - Y^0
+   \]
+   - Predicted outcome if treated minus actual outcome in control.  
+
+---
+
+## 📊 Example
+
+| Customer | Features (X)         | Group | Y (Outcome) |
+|----------|----------------------|-------|-------------|
+| A        | Age=25, Balance=5k   | Treated (X¹) | 1 |
+| B        | Age=27, Balance=6k   | Control (X⁰) | 0 |
+| C        | Age=50, Balance=50k  | Treated (X¹) | 0 |
+| D        | Age=48, Balance=45k  | Control (X⁰) | 1 |
+
+- **X¹** = {A, C} → treated features  
+- **X⁰** = {B, D} → control features  
+
+**Calculations**  
+- For A (treated):  
+  D¹_A = 1 − f₀(A)  
+- For B (control):  
+  D⁰_B = f₁(B) − 0  
+
+---
+
+## ✅ Business Takeaway
+
+- **X¹ = Treated customers**  
+- **X⁰ = Control customers**  
+- Both groups are used to **fill in the missing “what if” outcomes**.  
+- This makes uplift estimates more accurate, especially when groups are imbalanced.
+
