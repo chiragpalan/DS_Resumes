@@ -1,3 +1,4 @@
+
 Sub CombineJulFilesByHeader()
 
     Dim wb As Workbook, ws As Worksheet
@@ -6,9 +7,9 @@ Sub CombineJulFilesByHeader()
     Dim lastRow As Long, lastCol As Long
     Dim pasteRow As Long
     Dim colDict As Object
-    Dim header As Range
     Dim i As Long, r As Long, colPos As Long
     Dim value As Variant
+    Dim colName As String
     
     Application.ScreenUpdating = False
     Application.DisplayAlerts = False
@@ -29,7 +30,6 @@ Sub CombineJulFilesByHeader()
         
         lastCol = ws.Cells(1, ws.Columns.Count).End(xlToLeft).Column
         For i = 1 To lastCol
-            Dim colName As String
             colName = Trim(ws.Cells(1, i).Value)
             If colName <> "" Then
                 If Not colDict.exists(colName) Then
@@ -54,7 +54,6 @@ Sub CombineJulFilesByHeader()
         
         For r = 2 To lastRow
             For i = 1 To lastCol
-                Dim colName As String
                 colName = Trim(ws.Cells(1, i).Value)
                 If colDict.exists(colName) Then
                     colPos = colDict(colName)
