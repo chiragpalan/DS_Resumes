@@ -1,4 +1,4 @@
-Sub CombineJulFilesAligned()
+Sub CombineJulFilesByHeader()
 
     Dim wb As Workbook, ws As Worksheet
     Dim masterWb As Workbook, masterWs As Worksheet
@@ -6,8 +6,9 @@ Sub CombineJulFilesAligned()
     Dim lastRow As Long, lastCol As Long
     Dim pasteRow As Long
     Dim colDict As Object
-    Dim header As Range, rng As Range
-    Dim i As Long, colPos As Long
+    Dim header As Range
+    Dim i As Long, r As Long, colPos As Long
+    Dim value As Variant
     
     Application.ScreenUpdating = False
     Application.DisplayAlerts = False
@@ -20,7 +21,7 @@ Sub CombineJulFilesAligned()
     masterWs.Name = "CombinedData"
     pasteRow = 2
     
-    ' First pass: build master header list
+    ' First pass: collect all headers
     filename = Dir(folderPath & "*Jul*.xlsx")
     Do While filename <> ""
         Set wb = Workbooks.Open(folderPath & filename)
@@ -28,9 +29,13 @@ Sub CombineJulFilesAligned()
         
         lastCol = ws.Cells(1, ws.Columns.Count).End(xlToLeft).Column
         For i = 1 To lastCol
-            If Not colDict.exists(Trim(ws.Cells(1, i).Value)) And ws.Cells(1, i).Value <> "" Then
-                colDict.Add Trim(ws.Cells(1, i).Value), colDict.Count + 1
-                masterWs.Cells(1, colDict.Count).Value = Trim(ws.Cells(1, i).Value)
+            Dim colName As String
+            colName = Trim(ws.Cells(1, i).Value)
+            If colName <> "" Then
+                If Not colDict.exists(colName) Then
+                    colDict.Add colName, colDict.Count + 1
+                    masterWs.Cells(1, colDict.Count).Value = colName
+                End If
             End If
         Next i
         
@@ -38,7 +43,7 @@ Sub CombineJulFilesAligned()
         filename = Dir
     Loop
     
-    ' Second pass: copy data under correct headers
+    ' Second pass: copy data row by row into correct columns
     filename = Dir(folderPath & "*Jul*.xlsx")
     Do While filename <> ""
         Set wb = Workbooks.Open(folderPath & filename)
@@ -47,23 +52,26 @@ Sub CombineJulFilesAligned()
         lastRow = ws.Cells(ws.Rows.Count, 1).End(xlUp).Row
         lastCol = ws.Cells(1, ws.Columns.Count).End(xlToLeft).Column
         
-        For i = 1 To lastCol
-            If ws.Cells(1, i).Value <> "" Then
-                colPos = colDict(Trim(ws.Cells(1, i).Value))
-                ws.Range(ws.Cells(2, i), ws.Cells(lastRow, i)).Copy
-                masterWs.Cells(pasteRow, colPos).PasteSpecial xlPasteValues
-            End If
-        Next i
+        For r = 2 To lastRow
+            For i = 1 To lastCol
+                Dim colName As String
+                colName = Trim(ws.Cells(1, i).Value)
+                If colDict.exists(colName) Then
+                    colPos = colDict(colName)
+                    value = ws.Cells(r, i).Value
+                    masterWs.Cells(pasteRow, colPos).Value = value
+                End If
+            Next i
+            pasteRow = pasteRow + 1
+        Next r
         
-        pasteRow = masterWs.Cells(masterWs.Rows.Count, 1).End(xlUp).Row + 1
         wb.Close SaveChanges:=False
         filename = Dir
     Loop
     
-    Application.CutCopyMode = False
     Application.ScreenUpdating = True
     Application.DisplayAlerts = True
     
-    MsgBox "All Jul files combined successfully with aligned columns!", vbInformation
+    MsgBox "All Jul files combined successfully with columns aligned by name!", vbInformation
 
-End Sub
+End SubEnd Sub
