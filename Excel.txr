@@ -1,64 +1,58 @@
-Sub CombineJulFiles()
+Sub CombineJulFilesAligned()
 
-    Dim wb As Workbook
-    Dim ws As Worksheet
+    Dim wb As Workbook, ws As Worksheet
+    Dim masterWb As Workbook, masterWs As Worksheet
     Dim folderPath As String, filename As String
-    Dim masterWb As Workbook
-    Dim masterWs As Worksheet
     Dim lastRow As Long, lastCol As Long
     Dim pasteRow As Long
-    Dim maxCols As Long
-    Dim colCount As Long
-    Dim rng As Range
+    Dim colDict As Object
+    Dim header As Range, rng As Range
+    Dim i As Long, colPos As Long
     
     Application.ScreenUpdating = False
     Application.DisplayAlerts = False
     
-    ' Set folder path
-    folderPath = "C:\YourFolderPath\"   ' <-- Change this
+    folderPath = "C:\YourFolderPath\"   ' <-- Change this to your folder
     
-    ' Create new workbook for combined data
+    Set colDict = CreateObject("Scripting.Dictionary")
     Set masterWb = Workbooks.Add
     Set masterWs = masterWb.Sheets(1)
     masterWs.Name = "CombinedData"
     pasteRow = 2
     
-    ' Find the file with maximum columns
+    ' First pass: build master header list
     filename = Dir(folderPath & "*Jul*.xlsx")
     Do While filename <> ""
         Set wb = Workbooks.Open(folderPath & filename)
         Set ws = wb.Sheets(1)
         
         lastCol = ws.Cells(1, ws.Columns.Count).End(xlToLeft).Column
-        If lastCol > maxCols Then
-            maxCols = lastCol
-            ' Copy header row to master sheet
-            ws.Range(ws.Cells(1, 1), ws.Cells(1, lastCol)).Copy
-            masterWs.Cells(1, 1).PasteSpecial xlPasteValues
-        End If
+        For i = 1 To lastCol
+            If Not colDict.exists(Trim(ws.Cells(1, i).Value)) And ws.Cells(1, i).Value <> "" Then
+                colDict.Add Trim(ws.Cells(1, i).Value), colDict.Count + 1
+                masterWs.Cells(1, colDict.Count).Value = Trim(ws.Cells(1, i).Value)
+            End If
+        Next i
         
         wb.Close SaveChanges:=False
         filename = Dir
     Loop
     
-    ' Second pass: copy all data under master header
+    ' Second pass: copy data under correct headers
     filename = Dir(folderPath & "*Jul*.xlsx")
     Do While filename <> ""
         Set wb = Workbooks.Open(folderPath & filename)
         Set ws = wb.Sheets(1)
         
         lastRow = ws.Cells(ws.Rows.Count, 1).End(xlUp).Row
-        colCount = ws.Cells(1, ws.Columns.Count).End(xlToLeft).Column
+        lastCol = ws.Cells(1, ws.Columns.Count).End(xlToLeft).Column
         
-        ' Match columns to master header
-        For i = 1 To maxCols
-            On Error Resume Next
-            Set rng = ws.Rows(1).Find(masterWs.Cells(1, i).Value, LookAt:=xlWhole)
-            If Not rng Is Nothing Then
-                ws.Range(ws.Cells(2, rng.Column), ws.Cells(lastRow, rng.Column)).Copy
-                masterWs.Cells(pasteRow, i).PasteSpecial xlPasteValues
+        For i = 1 To lastCol
+            If ws.Cells(1, i).Value <> "" Then
+                colPos = colDict(Trim(ws.Cells(1, i).Value))
+                ws.Range(ws.Cells(2, i), ws.Cells(lastRow, i)).Copy
+                masterWs.Cells(pasteRow, colPos).PasteSpecial xlPasteValues
             End If
-            On Error GoTo 0
         Next i
         
         pasteRow = masterWs.Cells(masterWs.Rows.Count, 1).End(xlUp).Row + 1
@@ -70,6 +64,6 @@ Sub CombineJulFiles()
     Application.ScreenUpdating = True
     Application.DisplayAlerts = True
     
-    MsgBox "All Jul files combined successfully!", vbInformation
+    MsgBox "All Jul files combined successfully with aligned columns!", vbInformation
 
 End Sub
