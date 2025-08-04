@@ -1,0 +1,75 @@
+Sub CombineJulFiles()
+
+    Dim wb As Workbook
+    Dim ws As Worksheet
+    Dim folderPath As String, filename As String
+    Dim masterWb As Workbook
+    Dim masterWs As Worksheet
+    Dim lastRow As Long, lastCol As Long
+    Dim pasteRow As Long
+    Dim maxCols As Long
+    Dim colCount As Long
+    Dim rng As Range
+    
+    Application.ScreenUpdating = False
+    Application.DisplayAlerts = False
+    
+    ' Set folder path
+    folderPath = "C:\YourFolderPath\"   ' <-- Change this
+    
+    ' Create new workbook for combined data
+    Set masterWb = Workbooks.Add
+    Set masterWs = masterWb.Sheets(1)
+    masterWs.Name = "CombinedData"
+    pasteRow = 2
+    
+    ' Find the file with maximum columns
+    filename = Dir(folderPath & "*Jul*.xlsx")
+    Do While filename <> ""
+        Set wb = Workbooks.Open(folderPath & filename)
+        Set ws = wb.Sheets(1)
+        
+        lastCol = ws.Cells(1, ws.Columns.Count).End(xlToLeft).Column
+        If lastCol > maxCols Then
+            maxCols = lastCol
+            ' Copy header row to master sheet
+            ws.Range(ws.Cells(1, 1), ws.Cells(1, lastCol)).Copy
+            masterWs.Cells(1, 1).PasteSpecial xlPasteValues
+        End If
+        
+        wb.Close SaveChanges:=False
+        filename = Dir
+    Loop
+    
+    ' Second pass: copy all data under master header
+    filename = Dir(folderPath & "*Jul*.xlsx")
+    Do While filename <> ""
+        Set wb = Workbooks.Open(folderPath & filename)
+        Set ws = wb.Sheets(1)
+        
+        lastRow = ws.Cells(ws.Rows.Count, 1).End(xlUp).Row
+        colCount = ws.Cells(1, ws.Columns.Count).End(xlToLeft).Column
+        
+        ' Match columns to master header
+        For i = 1 To maxCols
+            On Error Resume Next
+            Set rng = ws.Rows(1).Find(masterWs.Cells(1, i).Value, LookAt:=xlWhole)
+            If Not rng Is Nothing Then
+                ws.Range(ws.Cells(2, rng.Column), ws.Cells(lastRow, rng.Column)).Copy
+                masterWs.Cells(pasteRow, i).PasteSpecial xlPasteValues
+            End If
+            On Error GoTo 0
+        Next i
+        
+        pasteRow = masterWs.Cells(masterWs.Rows.Count, 1).End(xlUp).Row + 1
+        wb.Close SaveChanges:=False
+        filename = Dir
+    Loop
+    
+    Application.CutCopyMode = False
+    Application.ScreenUpdating = True
+    Application.DisplayAlerts = True
+    
+    MsgBox "All Jul files combined successfully!", vbInformation
+
+End Sub
