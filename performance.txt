@@ -1,0 +1,6 @@
+• I delivered end-to-end enhancements for the HK Deposit Ensemble Model, including development, performance tracking, monitoring, and optimisation of the scoring pipeline, resulting in a more stable and scalable modelling framework.
+• I contributed to the OW process transition by absorbing the KT efficiently and supporting automation activities, including adopting the pricing optimisation simulator and streamlining data ingestion pipelines.
+• For SG deposits, I performed deep-dive segmentation analysis, providing actionable insights into client behaviour and balance movements that supported more targeted business strategies.
+• I built robust time-series forecasting models for NNM and deposit balances, applying advanced techniques and conducting detailed diagnostic checks to ensure accuracy, stability, and clear communication of results.
+• I developed a PoC for a True Lift Model to identify persuadable customers, helping reduce campaign costs while mitigating the risk of negatively impacting non-persuadable clients.
+• After transitioning to the Model Governance team, I have taken ownership of technical and business reviews of multiple models, validating everything from problem statements to final KPIs, while engaging with stakeholders to clarify requirements and ensure transparent, compliant, and well-documented model governance processes.
