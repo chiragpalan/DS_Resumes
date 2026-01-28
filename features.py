@@ -16,6 +16,19 @@ from lightgbm import LGBMRegressor
 from arfs.feature_selection import GrootCV
 
 
+def split_identifier_columns(X: pd.DataFrame, id_cols: list):
+    """
+    Separates identifier columns from feature columns.
+
+    Returns:
+    - X_id: identifier dataframe
+    - X_feat: feature dataframe
+    """
+    X_id = X[id_cols].copy()
+    X_feat = X.drop(columns=id_cols)
+    return X_id, X_feat
+
+
 # ============================================================
 # 1. Drop categorical (string) columns
 # ============================================================
@@ -192,46 +205,54 @@ def prepare_training_data(
     X: pd.DataFrame,
     y: pd.Series,
     missing_config_path: str,
+    id_cols: list,
     missing_threshold: float = 0.4,
     corr_threshold: float = 0.8
 ):
     """
-    End-to-end feature engineering & selection pipeline.
-
-    Input:
-    - X: raw feature dataframe
-    - y: regression target
-    Output:
-    - X_final: training-ready features
-    - y_final: aligned target
+    End-to-end feature engineering & selection pipeline
+    with identifier preservation.
     """
 
-    # Step 1: Drop categorical (string) columns
-    X_proc = drop_string_columns(X)
+    # ---- Step 0: Separate identifiers ----
+    X_id, X_proc = split_identifier_columns(X, id_cols)
 
-    # Step 2: Outlier treatment
+    # ---- Step 1: Drop categorical (string) columns ----
+    X_proc = drop_string_columns(X_proc)
+
+    # ---- Step 2: Outlier treatment ----
     X_proc = cap_outliers(X_proc)
 
-    # Step 3: Missing value imputation
+    # ---- Step 3: Missing value imputation ----
     X_proc = impute_missing_from_config(X_proc, missing_config_path)
 
-    # Step 4: Feature transformation
+    # ---- Step 4: Feature transformation ----
     X_proc = transform_skewed_features(X_proc)
 
-    # Step 5: Missing value filter
+    # ---- Step 5: Missing value filter ----
     X_proc = drop_high_missing_features(X_proc, missing_threshold)
 
-    # Step 6: GrootCV #1 (Relevance filtering)
+    # ---- Step 6: GrootCV #1 ----
     X_proc = grootcv_feature_selection(X_proc, y)
 
-    # Step 7: Correlation filter
+    # ---- Step 7: Correlation filter ----
     X_proc = drop_correlated_features(X_proc, corr_threshold)
 
-    # Step 8: GrootCV #2 (Post-correlation stability)
+    # ---- Step 8: GrootCV #2 ----
     X_proc = grootcv_feature_selection(X_proc, y)
 
-    # Final alignment
-    X_final = X_proc.copy()
-    y_final = y.loc[X_final.index]
+    # ---- Step 9: Final assembly ----
+    X_final = pd.concat([X_id.loc[X_proc.index], X_proc], axis=1)
+    y_final = y.loc[X_proc.index]
 
     return X_final, y_final
+
+
+id_cols = ["n_cust", "month_end"]
+
+X_train_ready, y_train_ready = prepare_training_data(
+    X=X_original,
+    y=y_reg,
+    missing_config_path="missing_value_strategy.xlsx",
+    id_cols=id_cols
+)
