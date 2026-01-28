@@ -1,393 +1,237 @@
 """
-feature_selection_pipeline.py
+Feature Engineering & Selection Pipeline for Regression (Numerical Only)
 
-End-to-end feature handling and feature selection pipeline
-for regression models in banking use cases.
-
-Key characteristics:
-- Automatic inference of column types
-- String columns treated as categorical
-- Numeric columns treated as continuous
-- Outlier treatment (1st–99th percentile)
-- Excel-driven missing value treatment
-- Missing value filtering
-- SHAP-based GrootCV feature selection (two-stage)
-- Correlation filtering (numeric only)
-- Returns final processed X (model-ready)
-
-Designed for:
-- Tree-based models (LightGBM)
-- SHAP explainability
-- Model validation and regulatory review
+Author: ---
+Use case: Banking / Deposit Outflow Regression
 """
 
-import pandas as pd
 import numpy as np
+import pandas as pd
+
+from scipy.stats import skew
+from sklearn.model_selection import KFold
+from sklearn.preprocessing import PowerTransformer
 
 from lightgbm import LGBMRegressor
 from arfs.feature_selection import GrootCV
 
 
 # ============================================================
-# 1. Column Type Inference
+# 1. Drop categorical (string) columns
 # ============================================================
 
-def infer_column_types(X: pd.DataFrame):
+def drop_string_columns(X: pd.DataFrame) -> pd.DataFrame:
     """
-    Infer categorical and numerical columns automatically.
-
-    Rules:
-    - Categorical: string / object dtype only
-    - Numerical: all remaining columns
-
-    Parameters
-    ----------
-    X : pd.DataFrame
-        Input feature matrix
-
-    Returns
-    -------
-    categorical_cols : list
-        List of categorical (string) columns
-    numerical_cols : list
-        List of numerical columns
+    Drops all string/object dtype columns.
     """
-    categorical_cols = X.select_dtypes(include=["object"]).columns.tolist()
-    numerical_cols = X.columns.difference(categorical_cols).tolist()
-    return categorical_cols, numerical_cols
+    string_cols = X.select_dtypes(include=["object", "string"]).columns
+    return X.drop(columns=string_cols)
 
 
 # ============================================================
-# 2. Outlier Treatment (Numeric Only)
+# 2. Outlier treatment (1st–99th percentile capping)
 # ============================================================
 
-def cap_outliers_quantile_numeric(
+def cap_outliers(
     X: pd.DataFrame,
-    numerical_cols: list,
-    lower_q: float = 0.01,
-    upper_q: float = 0.99
-):
+    q_low: float = 0.01,
+    q_high: float = 0.99
+) -> pd.DataFrame:
     """
-    Cap numerical variables at specified quantiles.
-
-    Purpose:
-    - Reduce impact of extreme values
-    - Stabilize tree splits and SHAP values
-
-    Parameters
-    ----------
-    X : pd.DataFrame
-        Input feature matrix
-    numerical_cols : list
-        List of numerical columns
-    lower_q : float
-        Lower quantile (default 0.01)
-    upper_q : float
-        Upper quantile (default 0.99)
-
-    Returns
-    -------
-    X_capped : pd.DataFrame
-        DataFrame with capped numerical features
+    Caps numerical features at given quantiles.
     """
-    X_capped = X.copy()
-
-    for col in numerical_cols:
-        if pd.api.types.is_numeric_dtype(X_capped[col]):
-            lower = X_capped[col].quantile(lower_q)
-            upper = X_capped[col].quantile(upper_q)
-            X_capped[col] = X_capped[col].clip(lower, upper)
-
-    return X_capped
+    X_out = X.copy()
+    for col in X_out.columns:
+        if X_out[col].nunique() > 10:
+            lower = X_out[col].quantile(q_low)
+            upper = X_out[col].quantile(q_high)
+            X_out[col] = X_out[col].clip(lower, upper)
+    return X_out
 
 
 # ============================================================
-# 3. Missing Value Treatment (Excel Driven)
+# 3. Missing value imputation (Excel-driven)
 # ============================================================
 
-def apply_missing_treatment(
+def impute_missing_from_config(
     X: pd.DataFrame,
-    config_path: str
-):
+    config_path: str,
+    sheet_name: str = "missing_strategy"
+) -> pd.DataFrame:
     """
-    Apply missing value treatment based on external Excel configuration.
+    Imputes missing values using an Excel configuration file.
 
-    Supported strategies:
-    - mean
-    - median
-    - mode
-    - constant
-
-    Excel format:
-    ----------------
-    feature_name | strategy | fill_value
-
-    Parameters
-    ----------
-    X : pd.DataFrame
-        Input feature matrix
-    config_path : str
-        Path to missing value treatment Excel file
-
-    Returns
-    -------
-    X_filled : pd.DataFrame
-        DataFrame with missing values treated
+    Expected Excel columns:
+    - feature
+    - strategy  (median / constant)
+    - fill_value (optional, used if strategy == constant)
     """
-    config = pd.read_excel(config_path)
-    X_filled = X.copy()
+    config = pd.read_excel(config_path, sheet_name=sheet_name)
+    X_imp = X.copy()
 
     for _, row in config.iterrows():
-        col = row["feature_name"]
-        strategy = row["strategy"]
-        fill_value = row.get("fill_value", None)
-
-        if col not in X_filled.columns:
+        col = row["feature"]
+        if col not in X_imp.columns:
             continue
 
-        if strategy == "mean":
-            X_filled[col] = X_filled[col].fillna(X_filled[col].mean())
-        elif strategy == "median":
-            X_filled[col] = X_filled[col].fillna(X_filled[col].median())
-        elif strategy == "mode":
-            X_filled[col] = X_filled[col].fillna(X_filled[col].mode()[0])
-        elif strategy == "constant":
-            X_filled[col] = X_filled[col].fillna(fill_value)
+        if row["strategy"] == "median":
+            X_imp[col] = X_imp[col].fillna(X_imp[col].median())
 
-    return X_filled
+        elif row["strategy"] == "constant":
+            X_imp[col] = X_imp[col].fillna(row["fill_value"])
+
+    return X_imp
 
 
 # ============================================================
-# 4. Missing Value Filter (Feature-Level)
+# 4. Feature transformation (skewness-based)
 # ============================================================
 
-def missing_value_filter(
+def transform_skewed_features(
     X: pd.DataFrame,
-    threshold: float = 0.3
-):
+    skew_threshold: float = 1.0
+) -> pd.DataFrame:
     """
-    Remove features with excessive missing values.
-
-    Parameters
-    ----------
-    X : pd.DataFrame
-        Input feature matrix
-    threshold : float
-        Maximum allowed missing fraction
-
-    Returns
-    -------
-    X_filtered : pd.DataFrame
-        DataFrame with high-missing columns removed
+    Applies Yeo-Johnson transformation to highly skewed features.
     """
-    missing_ratio = X.isnull().mean()
-    keep_cols = missing_ratio[missing_ratio <= threshold].index.tolist()
+    X_trans = X.copy()
+    pt = PowerTransformer(method="yeo-johnson")
+
+    skewed_cols = [
+        col for col in X_trans.columns
+        if abs(skew(X_trans[col].dropna())) > skew_threshold
+    ]
+
+    if skewed_cols:
+        X_trans[skewed_cols] = pt.fit_transform(X_trans[skewed_cols])
+
+    return X_trans
+
+
+# ============================================================
+# 5. Missing value filter (feature-level)
+# ============================================================
+
+def drop_high_missing_features(
+    X: pd.DataFrame,
+    missing_threshold: float = 0.4
+) -> pd.DataFrame:
+    """
+    Drops features with missing percentage above threshold.
+    """
+    missing_pct = X.isnull().mean()
+    keep_cols = missing_pct[missing_pct <= missing_threshold].index
     return X[keep_cols]
 
 
 # ============================================================
-# 5. Prepare Categorical Dtypes for LightGBM
-# ============================================================
-
-def prepare_string_categoricals(
-    X: pd.DataFrame,
-    categorical_cols: list
-):
-    """
-    Convert string categorical columns to 'category' dtype
-    for native LightGBM handling.
-
-    Parameters
-    ----------
-    X : pd.DataFrame
-        Input feature matrix
-    categorical_cols : list
-        List of categorical columns
-
-    Returns
-    -------
-    X_prepared : pd.DataFrame
-        DataFrame with categorical dtypes set
-    """
-    X_prepared = X.copy()
-    for col in categorical_cols:
-        X_prepared[col] = X_prepared[col].astype("category")
-    return X_prepared
-
-
-# ============================================================
-# 6. GrootCV Feature Selection (SHAP-Based)
+# 6. GrootCV (SHAP-based) Feature Selection
 # ============================================================
 
 def grootcv_feature_selection(
     X: pd.DataFrame,
     y: pd.Series,
-    categorical_cols: list,
-    cv: int = 5,
-    threshold: float = 0.01
-):
+    cv_folds: int = 5,
+    importance_threshold: float = 0.0,
+    random_state: int = 42
+) -> pd.DataFrame:
     """
-    Perform SHAP-based feature selection using GrootCV.
-
-    Parameters
-    ----------
-    X : pd.DataFrame
-        Input feature matrix
-    y : pd.Series
-        Target variable
-    categorical_cols : list
-        List of categorical columns
-    cv : int
-        Number of cross-validation folds
-    threshold : float
-        SHAP importance threshold
-
-    Returns
-    -------
-    selected_features : list
-        List of selected feature names
+    Applies GrootCV for regression using SHAP-based importance.
     """
-    model = LGBMRegressor(
+    estimator = LGBMRegressor(
         n_estimators=300,
-        max_depth=5,
         learning_rate=0.05,
-        subsample=0.8,
-        colsample_bytree=0.8,
-        random_state=42
+        max_depth=-1,
+        random_state=random_state
     )
+
+    cv = KFold(n_splits=cv_folds, shuffle=True, random_state=random_state)
 
     selector = GrootCV(
-        estimator=model,
+        estimator=estimator,
         cv=cv,
-        threshold=threshold,
-        importance="shap",
-        verbose=True
+        importance_threshold=importance_threshold,
+        verbose=0
     )
 
-    selector.fit(X, y, categorical_feature=categorical_cols)
-    selected_features = X.columns[selector.support_].tolist()
+    selector.fit(X, y)
+    selected_features = selector.get_feature_names_out()
 
-    return selected_features
+    return X[selected_features]
 
 
 # ============================================================
-# 7. Correlation Filter (Numeric Only)
+# 7. Correlation filter
 # ============================================================
 
-def correlation_filter_numeric(
+def drop_correlated_features(
     X: pd.DataFrame,
-    numerical_cols: list,
-    threshold: float = 0.75
-):
+    corr_threshold: float = 0.8
+) -> pd.DataFrame:
     """
-    Remove highly correlated numerical features.
-
-    Parameters
-    ----------
-    X : pd.DataFrame
-        Input feature matrix
-    numerical_cols : list
-        List of numerical columns
-    threshold : float
-        Correlation threshold
-
-    Returns
-    -------
-    drop_cols : list
-        List of columns to drop due to high correlation
+    Drops highly correlated features using absolute correlation.
     """
-    if len(numerical_cols) == 0:
-        return []
+    corr_matrix = X.corr().abs()
+    upper = corr_matrix.where(
+        np.triu(np.ones(corr_matrix.shape), k=1).astype(bool)
+    )
 
-    corr = X[numerical_cols].corr().abs()
-    upper = corr.where(np.triu(np.ones(corr.shape), k=1).astype(bool))
-
-    drop_cols = [
+    to_drop = [
         col for col in upper.columns
-        if any(upper[col] > threshold)
+        if any(upper[col] > corr_threshold)
     ]
 
-    return drop_cols
+    return X.drop(columns=to_drop)
 
 
 # ============================================================
-# 8. Full Feature Selection Pipeline (Returns Final X)
+# 8. Orchestrator: Full training data preparation
 # ============================================================
 
-def feature_selection_pipeline_return_X(
+def prepare_training_data(
     X: pd.DataFrame,
     y: pd.Series,
     missing_config_path: str,
-    missing_threshold: float = 0.3,
-    corr_threshold: float = 0.75,
-    groot_threshold: float = 0.01
+    missing_threshold: float = 0.4,
+    corr_threshold: float = 0.8
 ):
     """
-    End-to-end feature handling and feature selection pipeline.
+    End-to-end feature engineering & selection pipeline.
 
-    Parameters
-    ----------
-    X : pd.DataFrame
-        Raw input features
-    y : pd.Series
-        Target variable
-    missing_config_path : str
-        Path to missing value treatment Excel file
-    missing_threshold : float
-        Feature-level missing value threshold
-    corr_threshold : float
-        Correlation threshold for numeric features
-    groot_threshold : float
-        SHAP importance threshold for GrootCV
-
-    Returns
-    -------
-    X_final : pd.DataFrame
-        Final processed and selected feature matrix
+    Input:
+    - X: raw feature dataframe
+    - y: regression target
+    Output:
+    - X_final: training-ready features
+    - y_final: aligned target
     """
 
-    X_proc = X.copy()
+    # Step 1: Drop categorical (string) columns
+    X_proc = drop_string_columns(X)
 
-    # Infer column types
-    categorical_cols, numerical_cols = infer_column_types(X_proc)
+    # Step 2: Outlier treatment
+    X_proc = cap_outliers(X_proc)
 
-    # Outlier treatment
-    X_proc = cap_outliers_quantile_numeric(X_proc, numerical_cols)
+    # Step 3: Missing value imputation
+    X_proc = impute_missing_from_config(X_proc, missing_config_path)
 
-    # Missing value treatment
-    X_proc = apply_missing_treatment(X_proc, missing_config_path)
+    # Step 4: Feature transformation
+    X_proc = transform_skewed_features(X_proc)
 
-    # Missing value filter
-    X_proc = missing_value_filter(X_proc, threshold=missing_threshold)
+    # Step 5: Missing value filter
+    X_proc = drop_high_missing_features(X_proc, missing_threshold)
 
-    # Re-infer types
-    categorical_cols, numerical_cols = infer_column_types(X_proc)
+    # Step 6: GrootCV #1 (Relevance filtering)
+    X_proc = grootcv_feature_selection(X_proc, y)
 
-    # Prepare categorical dtypes
-    X_proc = prepare_string_categoricals(X_proc, categorical_cols)
+    # Step 7: Correlation filter
+    X_proc = drop_correlated_features(X_proc, corr_threshold)
 
-    # First GrootCV
-    selected_1 = grootcv_feature_selection(
-        X_proc, y, categorical_cols, threshold=groot_threshold
-    )
-    X_proc = X_proc[selected_1]
+    # Step 8: GrootCV #2 (Post-correlation stability)
+    X_proc = grootcv_feature_selection(X_proc, y)
 
-    # Re-infer types
-    categorical_cols, numerical_cols = infer_column_types(X_proc)
+    # Final alignment
+    X_final = X_proc.copy()
+    y_final = y.loc[X_final.index]
 
-    # Correlation filter
-    drop_corr = correlation_filter_numeric(
-        X_proc, numerical_cols, threshold=corr_threshold
-    )
-    X_proc = X_proc.drop(columns=drop_corr)
-
-    # Re-infer types
-    categorical_cols, numerical_cols = infer_column_types(X_proc)
-
-    # Final GrootCV
-    selected_final = grootcv_feature_selection(
-        X_proc, y, categorical_cols, threshold=groot_threshold
-    )
-    X_final = X_proc[selected_final]
-
-    return X_final
+    return X_final, y_final
